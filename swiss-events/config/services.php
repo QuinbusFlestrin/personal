@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'cron' => [
+        // Shared secret for the /cron/run endpoint that Infomaniak's task
+        // scheduler hits (no shell crontab on shared hosting). Generate a
+        // long random value per environment — never reuse the local one in production.
+        'secret' => env('CRON_SECRET'),
+    ],
+
 ];
