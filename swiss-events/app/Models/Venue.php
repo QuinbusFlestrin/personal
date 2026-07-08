@@ -27,6 +27,11 @@ class Venue extends Model
 
     public const TYPE_GENERIC = 'generic';
 
+    public function getRouteKeyName(): string
+    {
+        return 'slug';
+    }
+
     public function city(): BelongsTo
     {
         return $this->belongsTo(City::class);

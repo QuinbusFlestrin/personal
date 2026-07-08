@@ -44,6 +44,11 @@ class Event extends Model
         ];
     }
 
+    public function getRouteKeyName(): string
+    {
+        return 'slug';
+    }
+
     public function venue(): BelongsTo
     {
         return $this->belongsTo(Venue::class);
