@@ -1,0 +1,24 @@
+<?php
+
+namespace Database\Factories;
+
+use App\Models\SavedFilter;
+use Illuminate\Database\Eloquent\Factories\Factory;
+
+/**
+ * @extends Factory<SavedFilter>
+ */
+class SavedFilterFactory extends Factory
+{
+    /**
+     * Define the model's default state.
+     *
+     * @return array<string, mixed>
+     */
+    public function definition(): array
+    {
+        return [
+            //
+        ];
+    }
+}
