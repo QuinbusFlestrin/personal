@@ -9,8 +9,9 @@ automatically.
 
 1. In the Infomaniak Manager, create (or pick) the **Web Hosting** product and
    the domain/subdomain this site should live on. Set the site's **PHP
-   version to 8.4** (Manager → the site's settings) — that's what this app's
-   `composer.lock` and the CI/deploy workflows are pinned to.
+   version to 8.4 or newer** (e.g. 8.5) (Manager → the site's settings) —
+   this app requires PHP 8.4+; the CI/deploy workflows currently test
+   against 8.4.
 2. Create a **MySQL/MariaDB database** for the app (Manager → Databases) and
    note the host, database name, username, and password.
 3. Enable **SSH access** for the hosting (Manager → Advanced parameters →
