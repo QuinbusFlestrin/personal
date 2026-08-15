@@ -17,6 +17,9 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             CantonSeeder::class,
+            // Cities depend on cantons, and the import's venue→canton matching
+            // depends on cities.
+            CitySeeder::class,
             CategorySeeder::class,
             SourceSeeder::class,
         ]);

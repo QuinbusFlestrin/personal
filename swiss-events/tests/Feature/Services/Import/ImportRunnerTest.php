@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Services\Import;
 
+use App\Models\Canton;
+use App\Models\City;
 use App\Models\Event;
 use App\Models\ImportRun;
 use App\Models\Source;
@@ -199,5 +201,44 @@ class ImportRunnerTest extends TestCase
         $this->assertSame(1, $run->items_failed);
         $this->assertSame(ImportRun::STATUS_PARTIAL, $run->status);
         $this->assertSame(1, Event::count());
+    }
+
+    /**
+     * Canton is the main filter on /events and is denormalized onto the event
+     * from its venue, so an import that can't place its venues produces events
+     * that browsing will never surface.
+     */
+    public function test_it_places_imported_events_in_a_canton(): void
+    {
+        $canton = Canton::create(['code' => 'ZH', 'name' => 'Zürich', 'slug' => 'zurich']);
+        City::create(['name' => 'Zürich', 'slug' => 'zurich', 'canton_id' => $canton->id]);
+
+        Http::fake(['api.example.org/*' => Http::response([
+            'items' => [[
+                'id' => 'ext-1',
+                'name' => 'Jazz Night',
+                'start' => '2026-09-01T20:00:00Z',
+                'loc' => 'Kaufleuten',
+                'addr' => 'Pelikanplatz 18, 8001 Zürich',
+            ]],
+        ])]);
+
+        $source = Source::factory()->trusted()->create([
+            'type' => Source::TYPE_JSON_API,
+            'config' => [
+                'url' => 'https://api.example.org/events',
+                'items_path' => 'items',
+                'field_map' => [
+                    'external_id' => 'id', 'title' => 'name', 'starts_at' => 'start',
+                    'venue_name' => 'loc', 'venue_address' => 'addr',
+                ],
+            ],
+        ]);
+
+        app(ImportRunner::class)->run($source);
+
+        $event = Event::first();
+        $this->assertSame($canton->id, $event->canton_id);
+        $this->assertSame($canton->id, $event->venue->canton_id);
     }
 }

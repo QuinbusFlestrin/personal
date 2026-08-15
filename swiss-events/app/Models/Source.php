@@ -21,6 +21,8 @@ class Source extends Model
 
     public const TYPE_SCRAPER = 'scraper';
 
+    public const TYPE_JSON_LD = 'json_ld';
+
     public const TYPE_MANUAL = 'manual';
 
     public const TRUST_TRUSTED = 'trusted';

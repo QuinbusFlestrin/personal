@@ -32,7 +32,8 @@ class SourceResource extends Resource
                         Source::TYPE_RSS => 'RSS feed',
                         Source::TYPE_ICAL => 'iCal feed',
                         Source::TYPE_JSON_API => 'JSON API',
-                        Source::TYPE_SCRAPER => 'HTML scraper',
+                        Source::TYPE_SCRAPER => 'HTML scraper (CSS selectors)',
+                        Source::TYPE_JSON_LD => 'Embedded JSON-LD (schema.org Event)',
                         Source::TYPE_MANUAL => 'Manual entries (no automated fetch)',
                     ])
                     ->required()

@@ -9,11 +9,13 @@ use App\Models\Source;
 use App\Models\Venue;
 use App\Services\Import\Connectors\IcalConnector;
 use App\Services\Import\Connectors\JsonApiConnector;
+use App\Services\Import\Connectors\JsonLdConnector;
 use App\Services\Import\Connectors\RssConnector;
 use App\Services\Import\Connectors\ScraperConnector;
 use App\Services\Import\Contracts\SourceConnector;
 use App\Services\Import\Dedup\EventDeduplicator;
 use App\Services\Import\DTO\RawEventDTO;
+use App\Services\Import\Support\VenueLocationResolver;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -26,7 +28,10 @@ use Throwable;
  */
 class ImportRunner
 {
-    public function __construct(private readonly EventDeduplicator $deduplicator) {}
+    public function __construct(
+        private readonly EventDeduplicator $deduplicator,
+        private readonly VenueLocationResolver $locations,
+    ) {}
 
     public function run(Source $source): ImportRun
     {
@@ -78,6 +83,7 @@ class ImportRunner
             Source::TYPE_ICAL => app(IcalConnector::class),
             Source::TYPE_JSON_API => app(JsonApiConnector::class),
             Source::TYPE_SCRAPER => app(ScraperConnector::class),
+            Source::TYPE_JSON_LD => app(JsonLdConnector::class),
             default => throw new RuntimeException("No connector registered for source type [{$source->type}]"),
         };
     }
@@ -141,15 +147,32 @@ class ImportRunner
             return null;
         }
 
-        return Venue::firstOrCreate(
+        $location = $this->locations->resolve($dto->venueAddress, $dto->venueName);
+
+        $venue = Venue::firstOrCreate(
             ['slug' => Str::slug($dto->venueName)],
             [
                 'name' => $dto->venueName,
                 'address' => $dto->venueAddress,
+                'city_id' => $location['city_id'],
+                'canton_id' => $location['canton_id'],
                 'venue_type' => Venue::TYPE_GENERIC,
                 'status' => 'published',
             ]
         );
+
+        // A venue first seen through a source that published no address can be
+        // placed later by a richer source, so backfill rather than leave it
+        // permanently unfilterable. Existing values are never overwritten.
+        if ($venue->canton_id === null && $location['canton_id'] !== null) {
+            $venue->update(array_filter([
+                'address' => $venue->address ?? $dto->venueAddress,
+                'city_id' => $location['city_id'],
+                'canton_id' => $location['canton_id'],
+            ], fn ($value) => $value !== null));
+        }
+
+        return $venue;
     }
 
     private function resolveCategory(RawEventDTO $dto): ?Category

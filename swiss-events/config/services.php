@@ -42,4 +42,20 @@ return [
         'secret' => env('CRON_SECRET'),
     ],
 
+    'sources' => [
+        // API keys for import sources, referenced from a source's `config` JSON
+        // as "secret:<name>" (e.g. {"headers": {"x-api-key": "secret:myswitzerland"}}).
+        //
+        // They live here rather than in the sources table because that config is
+        // editable — and visible — in the admin UI, and they're read through
+        // config() rather than env() because `config:cache` (which the deploy
+        // runs) stops env() resolving at runtime entirely.
+        //
+        // Add one line per source that needs a key, then set the variable in the
+        // server's .env.
+        'secrets' => [
+            'myswitzerland' => env('MYSWITZERLAND_API_KEY'),
+        ],
+    ],
+
 ];
