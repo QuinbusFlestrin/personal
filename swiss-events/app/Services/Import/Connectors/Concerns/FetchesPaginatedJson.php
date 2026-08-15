@@ -39,9 +39,11 @@ trait FetchesPaginatedJson
         $mode = $pagination['mode'] ?? null;
         $maxPages = max(1, (int) ($pagination['max_pages'] ?? 1));
         $cursor = (int) ($pagination['start'] ?? ($mode === 'offset' ? 0 : 1));
+        $followedUrl = null;
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $response = $this->request($config, $source)->get($url, $this->query($config, $mode, $cursor));
+            $response = $this->request($config, $source)
+                ->get($url, $this->query($config, $mode, $cursor, $followedUrl));
             $response->throw();
 
             $body = $response->json();
@@ -64,12 +66,14 @@ trait FetchesPaginatedJson
             if ($mode === 'link') {
                 $next = Arr::get($body, $pagination['next_path'] ?? 'next');
 
-                if (! is_string($next) || $next === '') {
+                // A next link pointing back at the page just fetched would
+                // otherwise spend the whole max_pages budget re-importing it.
+                if (! is_string($next) || $next === '' || $next === $url) {
                     return;
                 }
 
-                // The next-page URL already carries its own query string.
                 $url = $next;
+                $followedUrl = $next;
 
                 continue;
             }
@@ -85,7 +89,9 @@ trait FetchesPaginatedJson
      */
     private function request(array $config, Source $source): PendingRequest
     {
-        $request = Http::timeout(20)->acceptJson();
+        // A single blip midway through pagination would otherwise discard the
+        // remaining pages, so one cheap retry before giving up.
+        $request = Http::timeout(20)->retry(2, 300, throw: false)->acceptJson();
 
         $headers = $this->resolveSecrets($config['headers'] ?? [], $source);
 
@@ -129,12 +135,27 @@ trait FetchesPaginatedJson
 
     /**
      * @param  array<string, mixed>  $config
+     * @param  string|null  $followedUrl  Set when the current URL came from a
+     *                                    next link, whose own parameters must survive.
      * @return array<string, mixed>
      */
-    private function query(array $config, ?string $mode, int $cursor): array
+    private function query(array $config, ?string $mode, int $cursor, ?string $followedUrl = null): array
     {
         $query = $config['query'] ?? [];
         $pagination = $config['pagination'] ?? [];
+
+        // Guzzle *replaces* a URI's query string with whatever is passed here
+        // (and Laravel's get() sets that option for any second argument, even
+        // an empty array). So a next link's parameters — its page number above
+        // all — have to be parsed out and merged back in, or every page after
+        // the first silently repeats the first.
+        if ($followedUrl !== null) {
+            parse_str((string) parse_url($followedUrl, PHP_URL_QUERY), $ownParameters);
+
+            // The link's own values win; config query fills in anything the
+            // API omitted from the link.
+            return array_merge($query, $ownParameters);
+        }
 
         if ($mode === 'page' || $mode === 'offset') {
             $query[$pagination['param'] ?? 'page'] = $cursor;
