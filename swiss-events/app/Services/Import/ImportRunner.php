@@ -74,7 +74,12 @@ class ImportRunner
 
             $status = $this->determineStatus($counts);
         } catch (Throwable $e) {
-            $status = ImportRun::STATUS_FAILED;
+            // A fetch that dies partway through has still imported everything
+            // before it. Calling the whole run "failed" hides that — and makes
+            // a genuinely failed run indistinguishable from a mostly-good one.
+            $status = $counts['items_seen'] > 0
+                ? ImportRun::STATUS_PARTIAL
+                : ImportRun::STATUS_FAILED;
             $errors[] = ['message' => 'Fetch failed: '.$e->getMessage()];
         }
 
