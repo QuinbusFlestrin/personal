@@ -120,6 +120,23 @@ class SourceSeeder extends Seeder
                 'is_active' => true,
             ],
             [
+                'name' => 'Songkick — Geneva',
+                'type' => Source::TYPE_JSON_LD,
+                'config' => [
+                    // Their metro-area pages embed schema.org Event markup with
+                    // venue name, street address, postcode and coordinates —
+                    // richer than most sites' own listings, and no key needed.
+                    // robots.txt permits this path for our crawler.
+                    'url' => 'https://www.songkick.com/metro-areas/27453-switzerland-geneva',
+                    'attribution' => [
+                        'text' => 'Songkick',
+                        'url' => 'https://www.songkick.com',
+                    ],
+                ],
+                'trust_level' => Source::TRUST_UNTRUSTED,
+                'is_active' => true,
+            ],
+            [
                 'name' => 'Manual entries',
                 'type' => Source::TYPE_MANUAL,
                 'config' => [],

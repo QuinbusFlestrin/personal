@@ -151,6 +151,19 @@ class InspectSource extends Command
     }
 
     /**
+     * Assets and third-party scripts that match the URL pattern but are never
+     * event data. Without this filter the command recommends json_api on the
+     * strength of a favicon manifest or a Google Maps callback, which is worse
+     * than saying nothing.
+     */
+    private const ENDPOINT_NOISE = [
+        'favicon', 'manifest', 'googleapis', 'gstatic', 'google-analytics',
+        'googletagmanager', 'doubleclick', 'facebook', 'hotjar', 'cloudflare',
+        'browserconfig', 'serviceworker', 'sw.json', '/img/', '/images/',
+        '/static/', '/assets/', '/fonts/', '.min.js', 'package.json',
+    ];
+
+    /**
      * Heuristic only — surfaces candidate URLs the page's own scripts call, so
      * they can be opened and checked by hand. A real endpoint here usually
      * means json_api beats scraping.
@@ -159,12 +172,31 @@ class InspectSource extends Command
      */
     private function jsonEndpoints(string $body): array
     {
-        preg_match_all('~["\'](https?://[^"\']+|/[^"\']*)(?:/api/|/api\?|\.json)([^"\']*)["\']~i', $body, $matches);
+        // Collect every quoted URL first, then decide which look like data.
+        // Matching the data marker inside the pattern missed URLs that *begin*
+        // with it, such as "/api/events?from=today".
+        preg_match_all('~["\'](https?://[^"\'\s]+|/[^"\'\s]*)["\']~', $body, $matches);
 
-        $candidates = array_map(
-            fn (int $i) => $matches[1][$i].$matches[2][$i],
-            array_keys($matches[1] ?? []),
-        );
+        $candidates = array_filter($matches[1] ?? [], function (string $url) {
+            $haystack = strtolower($url);
+
+            return str_contains($haystack, '/api/')
+                || str_starts_with($haystack, '/api?')
+                || str_ends_with($haystack, '.json')
+                || str_contains($haystack, '.json?');
+        });
+
+        $candidates = array_filter($candidates, function (string $url) {
+            $haystack = strtolower($url);
+
+            foreach (self::ENDPOINT_NOISE as $noise) {
+                if (str_contains($haystack, $noise)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
 
         return array_slice(array_values(array_unique($candidates)), 0, 10);
     }
