@@ -182,13 +182,64 @@ class VenueImportTest extends TestCase
         $this->assertEqualsCanonicalizing(['First', 'Second'], Venue::pluck('name')->all());
     }
 
+    /**
+     * Regression: the first live import re-fetched page 1 twenty-one times.
+     * Passing a query array to ->get() makes Guzzle *replace* the URI's query
+     * string, so the page number carried by links.next was being discarded.
+     * The existing link-mode test missed it because its fake next URL had no
+     * query string of its own.
+     */
+    public function test_following_a_next_link_keeps_that_links_query_parameters(): void
+    {
+        Http::fake(['api.example.org/*' => Http::sequence()
+            ->push([
+                'data' => [['identifier' => 'a', 'name' => 'First']],
+                'links' => ['next' => 'https://api.example.org/v1/places?hitsPerPage=50&page=1'],
+            ])
+            ->push([
+                'data' => [['identifier' => 'b', 'name' => 'Second']],
+                'links' => [],
+            ]),
+        ]);
+
+        app(ImportRunner::class)->run($this->source([
+            'query' => ['hitsPerPage' => 100],
+            'pagination' => ['mode' => 'link', 'next_path' => 'links.next', 'max_pages' => 10],
+        ]));
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'page=1'));
+        $this->assertEqualsCanonicalizing(['First', 'Second'], Venue::pluck('name')->all());
+    }
+
+    public function test_a_next_link_that_does_not_advance_stops_the_run(): void
+    {
+        Http::fake(['api.example.org/*' => Http::response([
+            'data' => [['identifier' => 'a', 'name' => 'Groundhog']],
+            // Points at the URL just fetched — without a guard this burns
+            // every one of max_pages on identical requests.
+            'links' => ['next' => 'https://api.example.org/v1/places'],
+        ])]);
+
+        $run = app(ImportRunner::class)->run($this->source([
+            'pagination' => ['mode' => 'link', 'next_path' => 'links.next', 'max_pages' => 50],
+        ]));
+
+        $this->assertSame(1, $run->items_seen);
+    }
+
     public function test_pagination_stops_at_max_pages(): void
     {
-        // A feed whose "next" link never terminates must not loop forever.
-        Http::fake(['api.example.org/*' => Http::response([
-            'data' => [['identifier' => uniqid(), 'name' => 'Endless']],
-            'links' => ['next' => 'https://api.example.org/v1/places?page=99'],
-        ])]);
+        // A feed that genuinely keeps advancing must still be capped — here the
+        // next link always moves on, so max_pages is the only thing that ends it.
+        Http::fake(function ($request) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+            $page = (int) ($query['page'] ?? 0);
+
+            return Http::response([
+                'data' => [['identifier' => "id-{$page}", 'name' => "Place {$page}"]],
+                'links' => ['next' => 'https://api.example.org/v1/places?page='.($page + 1)],
+            ]);
+        });
 
         $run = app(ImportRunner::class)->run($this->source([
             'pagination' => ['mode' => 'link', 'next_path' => 'links.next', 'max_pages' => 3],
@@ -210,6 +261,42 @@ class VenueImportTest extends TestCase
         ]));
 
         Http::assertSent(fn ($request) => $request->hasHeader('x-api-key', 'super-secret-value'));
+    }
+
+    /**
+     * The first live run imported 1,050 records and then hit an error on a
+     * later page, and was reported as an outright failure — which both hid the
+     * work done and made it indistinguishable from a run that achieved nothing.
+     */
+    public function test_a_failure_after_some_items_is_reported_as_partial(): void
+    {
+        Http::fake(['api.example.org/*' => Http::sequence()
+            ->push([
+                'data' => [['identifier' => 'a', 'name' => 'Imported']],
+                'links' => ['next' => 'https://api.example.org/v1/places?page=1'],
+            ])
+            ->push(status: 500)
+            ->push(status: 500)
+            ->push(status: 500),
+        ]);
+
+        $run = app(ImportRunner::class)->run($this->source([
+            'pagination' => ['mode' => 'link', 'next_path' => 'links.next', 'max_pages' => 10],
+        ]));
+
+        $this->assertSame(ImportRun::STATUS_PARTIAL, $run->status);
+        $this->assertSame(1, $run->items_created);
+        $this->assertStringContainsString('Fetch failed', $run->error_log[0]['message']);
+        $this->assertSame('Imported', Venue::first()->name);
+    }
+
+    public function test_a_run_that_fails_before_any_item_is_still_a_failure(): void
+    {
+        Http::fake(['api.example.org/*' => Http::response(status: 500)]);
+
+        $run = app(ImportRunner::class)->run($this->source());
+
+        $this->assertSame(ImportRun::STATUS_FAILED, $run->status);
     }
 
     public function test_a_missing_secret_fails_the_run_with_a_clear_message(): void
