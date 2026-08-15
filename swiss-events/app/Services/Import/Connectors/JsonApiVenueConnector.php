@@ -66,8 +66,61 @@ class JsonApiVenueConnector implements VenueSourceConnector
             lng: isset($fieldMap['lng']) ? $this->float(Arr::get($item, $fieldMap['lng'])) : null,
             website: isset($fieldMap['website']) ? $this->string(Arr::get($item, $fieldMap['website'])) : null,
             image: isset($fieldMap['image']) ? $this->string(Arr::get($item, $fieldMap['image'])) : null,
-            venueType: isset($fieldMap['venue_type']) ? $this->string(Arr::get($item, $fieldMap['venue_type'])) : null,
+            venueType: $this->venueType($item, $fieldMap),
         );
+    }
+
+    /**
+     * The venue type is sometimes a plain field and sometimes buried in a list
+     * of typed classifications (Switzerland Tourism publishes e.g.
+     * `classification[] {name: "buildingstype", values: [{name: "bridge"}]}`),
+     * so a dot path alone can't reach it.
+     *
+     * @param  array<string, mixed>  $item
+     * @param  array<string, mixed>  $fieldMap
+     */
+    private function venueType(array $item, array $fieldMap): ?string
+    {
+        if (isset($fieldMap['venue_type'])) {
+            $direct = $this->string(Arr::get($item, $fieldMap['venue_type']));
+
+            if ($direct !== null) {
+                return $direct;
+            }
+        }
+
+        $wanted = (array) ($fieldMap['venue_type_classifications'] ?? []);
+
+        if ($wanted === []) {
+            return null;
+        }
+
+        $classifications = Arr::get($item, $fieldMap['classification_path'] ?? 'classification', []);
+
+        if (! is_array($classifications)) {
+            return null;
+        }
+
+        // Ordered by preference, so a more specific classification wins.
+        foreach ($wanted as $name) {
+            foreach ($classifications as $classification) {
+                if (! is_array($classification) || ($classification['name'] ?? null) !== $name) {
+                    continue;
+                }
+
+                $value = $classification['values'][0] ?? null;
+
+                if (is_array($value)) {
+                    $type = $this->string($value['title'] ?? $value['name'] ?? null);
+
+                    if ($type !== null) {
+                        return $type;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private function string(mixed $value): ?string

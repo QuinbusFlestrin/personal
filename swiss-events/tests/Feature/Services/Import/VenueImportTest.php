@@ -32,7 +32,7 @@ class VenueImportTest extends TestCase
 
     private function source(array $config = []): Source
     {
-        return Source::factory()->create([
+        return Source::factory()->trusted()->create([
             'type' => Source::TYPE_JSON_API,
             'config' => [
                 'content' => 'venues',
@@ -80,6 +80,62 @@ class VenueImportTest extends TestCase
         $this->assertSame(Venue::TYPE_HISTORICAL_BUILDING, $venue->venue_type);
         // Placed via the city named in its address.
         $this->assertSame($this->canton->id, $venue->canton_id);
+    }
+
+    /**
+     * The Switzerland Tourism payload carries coordinates and no address
+     * whatsoever, so text matching finds nothing and the canton — the site's
+     * main filter — has to come from the point itself.
+     */
+    public function test_it_places_a_venue_that_has_coordinates_but_no_address(): void
+    {
+        Http::fake(['api.example.org/*' => Http::response(['data' => [[
+            'identifier' => 'fff92c7b',
+            'name' => 'Schöllenen Gorge',
+            'geo' => ['latitude' => 46.649147, 'longitude' => 8.590251],
+        ]]])]);
+
+        app(ImportRunner::class)->run($this->source());
+
+        $venue = Venue::first();
+        $this->assertNull($venue->address);
+        $this->assertSame($this->canton->id, $venue->canton_id, 'canton should be derived from coordinates');
+    }
+
+    public function test_it_reads_the_venue_type_out_of_a_classification_list(): void
+    {
+        Http::fake(['api.example.org/*' => Http::response(['data' => [[
+            'identifier' => 'x1',
+            'name' => 'Devil\'s Bridge',
+            'classification' => [
+                ['name' => 'seasons', 'values' => [['name' => 'winter', 'title' => 'Winter']]],
+                ['name' => 'buildingstype', 'values' => [['name' => 'bridge', 'title' => 'Bridge']]],
+            ],
+        ]]])]);
+
+        app(ImportRunner::class)->run($this->source([
+            'field_map' => [
+                'external_id' => 'identifier',
+                'name' => 'name',
+                'venue_type_classifications' => ['buildingstype', 'naturetype'],
+            ],
+        ]));
+
+        $this->assertSame(Venue::TYPE_HISTORICAL_BUILDING, Venue::first()->venue_type);
+    }
+
+    public function test_places_from_an_untrusted_source_wait_as_drafts(): void
+    {
+        Http::fake(['api.example.org/*' => Http::response(['data' => [
+            ['identifier' => 'x1', 'name' => 'Unvetted Place'],
+        ]])]);
+
+        $source = $this->source();
+        $source->update(['trust_level' => Source::TRUST_UNTRUSTED]);
+
+        app(ImportRunner::class)->run($source);
+
+        $this->assertSame('draft', Venue::first()->status);
     }
 
     public function test_reimporting_updates_instead_of_duplicating(): void

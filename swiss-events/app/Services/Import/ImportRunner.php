@@ -139,7 +139,7 @@ class ImportRunner
      */
     private function processVenue(Source $source, RawVenueDTO $dto): string
     {
-        $location = $this->locations->resolve($dto->address, $dto->locationHint ?? $dto->name);
+        $location = $this->locations->resolve($dto->address, $dto->locationHint ?? $dto->name, $dto->lat, $dto->lng);
 
         $attributes = array_filter([
             'name' => $dto->name,
@@ -169,7 +169,9 @@ class ImportRunner
             'slug' => $this->uniqueVenueSlug($dto->name),
             'source_id' => $source->id,
             'source_external_id' => $dto->externalId,
-            'status' => 'published',
+            // Same trust rule as events: an official dataset publishes straight
+            // away, anything unvetted waits for a look in the admin.
+            'status' => $source->isTrusted() ? 'published' : 'draft',
         ]);
 
         return 'items_created';
@@ -188,7 +190,9 @@ class ImportRunner
             str_contains($hint, 'park'), str_contains($hint, 'garden') => Venue::TYPE_PARK,
             str_contains($hint, 'theat') => Venue::TYPE_THEATRE,
             str_contains($hint, 'castle'), str_contains($hint, 'church'),
-            str_contains($hint, 'monument'), str_contains($hint, 'historic') => Venue::TYPE_HISTORICAL_BUILDING,
+            str_contains($hint, 'monument'), str_contains($hint, 'historic'),
+            str_contains($hint, 'bridge'), str_contains($hint, 'tower'),
+            str_contains($hint, 'abbey'), str_contains($hint, 'ruin') => Venue::TYPE_HISTORICAL_BUILDING,
             default => Venue::TYPE_GENERIC,
         };
     }

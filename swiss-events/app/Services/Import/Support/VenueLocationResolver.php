@@ -52,30 +52,57 @@ class VenueLocationResolver
         'zurigo' => 'zurich',
     ];
 
+    public function __construct(private readonly CantonLocator $locator) {}
+
     /**
+     * Coordinates, when present, are authoritative — several sources publish
+     * a point and no address whatsoever.
+     *
      * @return array{city_id: ?int, canton_id: ?int}
      */
-    public function resolve(?string $address, ?string $venueName = null): array
-    {
+    public function resolve(
+        ?string $address,
+        ?string $venueName = null,
+        ?float $lat = null,
+        ?float $lng = null,
+    ): array {
         $haystack = $this->normalize(trim(($address ?? '').' '.($venueName ?? '')));
 
-        if ($haystack === '') {
-            return ['city_id' => null, 'canton_id' => null];
+        if ($haystack !== '') {
+            foreach ($this->cities() as $city) {
+                if ($this->containsWord($haystack, $city['name'])) {
+                    return ['city_id' => $city['city_id'], 'canton_id' => $city['canton_id']];
+                }
+            }
+
+            foreach ($this->cantons() as $canton) {
+                if ($this->containsWord($haystack, $canton['name'])) {
+                    return ['city_id' => null, 'canton_id' => $canton['canton_id']];
+                }
+            }
         }
 
-        foreach ($this->cities() as $city) {
-            if ($this->containsWord($haystack, $city['name'])) {
-                return ['city_id' => $city['city_id'], 'canton_id' => $city['canton_id']];
-            }
+        return [
+            'city_id' => null,
+            'canton_id' => $this->matchCantonCode($address ?? '') ?? $this->matchCoordinates($lat, $lng),
+        ];
+    }
+
+    private function matchCoordinates(?float $lat, ?float $lng): ?int
+    {
+        $code = $this->locator->codeFor($lat, $lng);
+
+        if ($code === null) {
+            return null;
         }
 
         foreach ($this->cantons() as $canton) {
-            if ($this->containsWord($haystack, $canton['name'])) {
-                return ['city_id' => null, 'canton_id' => $canton['canton_id']];
+            if ($canton['code'] === $code) {
+                return $canton['canton_id'];
             }
         }
 
-        return ['city_id' => null, 'canton_id' => $this->matchCantonCode($address ?? '')];
+        return null;
     }
 
     /**
