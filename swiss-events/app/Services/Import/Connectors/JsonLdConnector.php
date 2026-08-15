@@ -5,6 +5,7 @@ namespace App\Services\Import\Connectors;
 use App\Models\Source;
 use App\Services\Import\Contracts\SourceConnector;
 use App\Services\Import\DTO\RawEventDTO;
+use App\Services\Import\Support\RobotsGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -52,6 +53,8 @@ class JsonLdConnector implements SourceConnector
      */
     private const EXTRA_EVENT_TYPES = ['Festival', 'Hackathon', 'CourseInstance'];
 
+    public function __construct(private readonly RobotsGate $robots) {}
+
     public function fetch(Source $source): iterable
     {
         $config = $source->config ?? [];
@@ -86,13 +89,19 @@ class JsonLdConnector implements SourceConnector
      */
     private function fetchUrl(string $url, array $config): iterable
     {
-        $request = Http::timeout(20);
+        // Identify honestly by default rather than posing as a browser — this
+        // runs nightly against other people's sites, so it is a crawler and
+        // says so.
+        $userAgent = $config['user_agent'] ?? RobotsGate::USER_AGENT.' (+https://events.mrminimalista.ch)';
 
-        if (isset($config['user_agent'])) {
-            $request = $request->withHeaders(['User-Agent' => $config['user_agent']]);
+        if (! ($config['ignore_robots'] ?? false) && ! $this->robots->allows($url, $userAgent)) {
+            throw new RuntimeException(
+                "robots.txt disallows fetching {$url} for [{$userAgent}]. ".
+                'Set config.ignore_robots to true only for a site you control.'
+            );
         }
 
-        $response = $request->get($url);
+        $response = Http::timeout(20)->withHeaders(['User-Agent' => $userAgent])->get($url);
         $response->throw();
 
         $crawler = new Crawler($response->body(), $url);

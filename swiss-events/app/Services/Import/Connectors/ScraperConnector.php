@@ -5,6 +5,7 @@ namespace App\Services\Import\Connectors;
 use App\Models\Source;
 use App\Services\Import\Contracts\SourceConnector;
 use App\Services\Import\DTO\RawEventDTO;
+use App\Services\Import\Support\RobotsGate;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -28,6 +29,8 @@ use Symfony\Component\DomCrawler\Crawler;
  */
 class ScraperConnector implements SourceConnector
 {
+    public function __construct(private readonly RobotsGate $robots) {}
+
     public function fetch(Source $source): iterable
     {
         $config = $source->config ?? [];
@@ -39,7 +42,16 @@ class ScraperConnector implements SourceConnector
             throw new RuntimeException("Source #{$source->id} ({$source->name}) config must set url, list_selector, and fields.title/starts_at");
         }
 
-        $response = Http::timeout(20)->get($url);
+        $userAgent = $config['user_agent'] ?? RobotsGate::USER_AGENT.' (+https://events.mrminimalista.ch)';
+
+        if (! ($config['ignore_robots'] ?? false) && ! $this->robots->allows($url, $userAgent)) {
+            throw new RuntimeException(
+                "robots.txt disallows fetching {$url} for [{$userAgent}]. ".
+                'Set config.ignore_robots to true only for a site you control.'
+            );
+        }
+
+        $response = Http::timeout(20)->withHeaders(['User-Agent' => $userAgent])->get($url);
         $response->throw();
 
         $crawler = new Crawler($response->body(), $url);

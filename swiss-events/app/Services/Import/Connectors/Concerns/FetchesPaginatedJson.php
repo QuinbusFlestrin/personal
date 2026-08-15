@@ -42,8 +42,12 @@ trait FetchesPaginatedJson
         $followedUrl = null;
 
         for ($page = 0; $page < $maxPages; $page++) {
-            $response = $this->request($config, $source)
-                ->get($url, $this->query($config, $mode, $cursor, $followedUrl));
+            $response = $this->request($config, $source)->get(
+                $url,
+                // Some APIs take their key as a query parameter rather than a
+                // header (Ticketmaster's `apikey`), so secrets resolve here too.
+                $this->resolveSecrets($this->query($config, $mode, $cursor, $followedUrl), $source)
+            );
             $response->throw();
 
             $body = $response->json();

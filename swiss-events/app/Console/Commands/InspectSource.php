@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Source;
 use App\Services\Import\Connectors\JsonLdConnector;
+use App\Services\Import\Support\RobotsGate;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -21,14 +22,23 @@ class InspectSource extends Command
      * schema.org markup, then an underlying JSON endpoint, then selectors —
      * and reports the cheapest rung that actually applies.
      */
-    public function handle(JsonLdConnector $jsonLd): int
+    public function handle(JsonLdConnector $jsonLd, RobotsGate $robots): int
     {
         $url = $this->argument('url');
 
+        // Report this first: if the site disallows us, the rest is moot and
+        // nobody should spend time configuring a source that will never run.
+        $allowed = $robots->allows($url);
+        $this->line($allowed
+            ? '<info>robots.txt: crawlable</info>'
+            : '<comment>robots.txt: DISALLOWED for our crawler — this source cannot be imported by scraping</comment>');
+        $this->line('');
+
         try {
             $response = Http::timeout(20)
-                // Some sites reject unknown clients outright; identify honestly.
-                ->withHeaders(['User-Agent' => 'SwissEventsBot/1.0 (+https://events.mrminimalista.ch)'])
+                // Same identity the importer uses, so what we see here is what
+                // an actual run would see.
+                ->withHeaders(['User-Agent' => RobotsGate::USER_AGENT.' (+https://events.mrminimalista.ch)'])
                 ->get($url);
             $response->throw();
         } catch (Throwable $e) {

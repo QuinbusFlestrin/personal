@@ -68,6 +68,58 @@ class SourceSeeder extends Seeder
                 'is_active' => true,
             ],
             [
+                'name' => 'Ticketmaster CH — Events',
+                'type' => Source::TYPE_JSON_API,
+                'config' => [
+                    'url' => 'https://app.ticketmaster.com/discovery/v2/events.json',
+                    'items_path' => '_embedded.events',
+                    // Ticketmaster takes its key as a query parameter, not a
+                    // header — resolved from config/services.php all the same.
+                    'query' => [
+                        'apikey' => 'secret:ticketmaster',
+                        'countryCode' => 'CH',
+                    ],
+                    // Page mode, not link mode: their _links.next.href is a
+                    // relative path, which link mode would treat as absolute.
+                    // Their deep-paging cap is page*size <= 1000, so 5 x 200
+                    // is the reachable window rather than the whole catalogue.
+                    'pagination' => [
+                        'mode' => 'page',
+                        'param' => 'page',
+                        'size_param' => 'size',
+                        'page_size' => 200,
+                        'start' => 0,
+                        'max_pages' => 5,
+                    ],
+                    'field_map' => [
+                        'external_id' => 'id',
+                        'title' => 'name',
+                        'starts_at' => 'dates.start.dateTime',
+                        'ends_at' => 'dates.end.dateTime',
+                        'external_url' => 'url',
+                        'image' => 'images.0.url',
+                        'venue_name' => '_embedded.venues.0.name',
+                        'venue_address' => '_embedded.venues.0.address.line1',
+                        'price_info' => 'priceRanges.0.min',
+                        'category_hint' => 'classifications.0.segment.name',
+                    ],
+                    'category_map' => [
+                        'Music' => 'Concerts',
+                        'Arts & Theatre' => 'Theatre & Shows',
+                        'Sports' => 'Sports',
+                        'Film' => 'Theatre & Shows',
+                    ],
+                    'attribution' => [
+                        'text' => 'Ticketmaster',
+                        'url' => 'https://www.ticketmaster.ch',
+                    ],
+                ],
+                // Untrusted to begin with: the first runs land in the review
+                // queue so the mapping can be judged before anything publishes.
+                'trust_level' => Source::TRUST_UNTRUSTED,
+                'is_active' => true,
+            ],
+            [
                 'name' => 'Manual entries',
                 'type' => Source::TYPE_MANUAL,
                 'config' => [],

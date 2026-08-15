@@ -55,6 +55,7 @@ return [
         // server's .env.
         'secrets' => [
             'myswitzerland' => env('MYSWITZERLAND_API_KEY'),
+            'ticketmaster' => env('TICKETMASTER_API_KEY'),
         ],
     ],
 

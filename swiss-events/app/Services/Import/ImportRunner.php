@@ -67,7 +67,7 @@ class ImportRunner
                     $counts['items_failed']++;
                     $errors[] = [
                         'title' => $dto instanceof RawVenueDTO ? $dto->name : $dto->title,
-                        'message' => $e->getMessage(),
+                        'message' => $this->redact($e->getMessage()),
                     ];
                 }
             }
@@ -80,7 +80,7 @@ class ImportRunner
             $status = $counts['items_seen'] > 0
                 ? ImportRun::STATUS_PARTIAL
                 : ImportRun::STATUS_FAILED;
-            $errors[] = ['message' => 'Fetch failed: '.$e->getMessage()];
+            $errors[] = ['message' => 'Fetch failed: '.$this->redact($e->getMessage())];
         }
 
         $importRun->update([...$counts, 'finished_at' => now(), 'status' => $status, 'error_log' => $errors]);
@@ -221,7 +221,7 @@ class ImportRunner
     private function processEvent(Source $source, RawEventDTO $dto): string
     {
         $venue = $this->resolveVenue($dto);
-        $category = $this->resolveCategory($dto);
+        $category = $this->resolveCategory($source, $dto);
         $hash = $this->deduplicator->hash($dto->title, $dto->startsAt, $venue?->id, $dto->venueName);
 
         $attributes = [
@@ -302,15 +302,34 @@ class ImportRunner
         return $venue;
     }
 
-    private function resolveCategory(RawEventDTO $dto): ?Category
+    private function resolveCategory(Source $source, RawEventDTO $dto): ?Category
     {
         if (! $dto->categoryHint) {
             return null;
         }
 
-        $slug = Str::slug($dto->categoryHint);
+        // Sources use their own vocabulary — Ticketmaster says "Music" where we
+        // say "Concerts" — so a source can map its terms onto ours rather than
+        // every imported event landing uncategorised.
+        $hint = $source->config['category_map'][$dto->categoryHint] ?? $dto->categoryHint;
 
-        return Category::where('slug', $slug)->orWhere('name', $dto->categoryHint)->first();
+        return Category::where('slug', Str::slug($hint))->orWhere('name', $hint)->first();
+    }
+
+    /**
+     * Keeps configured API keys out of import_runs.error_log, which is shown in
+     * the admin. A connection error can echo the full request URL, and some
+     * APIs carry their key in the query string.
+     */
+    private function redact(string $message): string
+    {
+        foreach ((array) config('services.sources.secrets', []) as $secret) {
+            if (is_string($secret) && $secret !== '') {
+                $message = str_replace($secret, '[redacted]', $message);
+            }
+        }
+
+        return $message;
     }
 
     private function uniqueSlug(string $title, string $dateSuffix): string
