@@ -9,12 +9,15 @@ use App\Models\Source;
 use App\Models\Venue;
 use App\Services\Import\Connectors\IcalConnector;
 use App\Services\Import\Connectors\JsonApiConnector;
+use App\Services\Import\Connectors\JsonApiVenueConnector;
 use App\Services\Import\Connectors\JsonLdConnector;
 use App\Services\Import\Connectors\RssConnector;
 use App\Services\Import\Connectors\ScraperConnector;
 use App\Services\Import\Contracts\SourceConnector;
+use App\Services\Import\Contracts\VenueSourceConnector;
 use App\Services\Import\Dedup\EventDeduplicator;
 use App\Services\Import\DTO\RawEventDTO;
+use App\Services\Import\DTO\RawVenueDTO;
 use App\Services\Import\Support\VenueLocationResolver;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -28,6 +31,10 @@ use Throwable;
  */
 class ImportRunner
 {
+    public const CONTENT_EVENTS = 'events';
+
+    public const CONTENT_VENUES = 'venues';
+
     public function __construct(
         private readonly EventDeduplicator $deduplicator,
         private readonly VenueLocationResolver $locations,
@@ -51,16 +58,17 @@ class ImportRunner
         $errors = [];
 
         try {
-            $connector = $this->resolveConnector($source);
-
-            foreach ($connector->fetch($source) as $dto) {
+            foreach ($this->items($source) as $dto) {
                 $counts['items_seen']++;
 
                 try {
                     $counts[$this->processItem($source, $dto)]++;
                 } catch (Throwable $e) {
                     $counts['items_failed']++;
-                    $errors[] = ['title' => $dto->title, 'message' => $e->getMessage()];
+                    $errors[] = [
+                        'title' => $dto instanceof RawVenueDTO ? $dto->name : $dto->title,
+                        'message' => $e->getMessage(),
+                    ];
                 }
             }
 
@@ -76,6 +84,22 @@ class ImportRunner
         return $importRun;
     }
 
+    /**
+     * A source publishes either dated events (the default) or places, declared
+     * as `config.content`. Both paths share the per-item error isolation and
+     * ImportRun bookkeeping in run().
+     *
+     * @return iterable<RawEventDTO|RawVenueDTO>
+     */
+    private function items(Source $source): iterable
+    {
+        if (($source->config['content'] ?? self::CONTENT_EVENTS) === self::CONTENT_VENUES) {
+            return $this->resolveVenueConnector($source)->fetchVenues($source);
+        }
+
+        return $this->resolveConnector($source)->fetch($source);
+    }
+
     private function resolveConnector(Source $source): SourceConnector
     {
         return match ($source->type) {
@@ -88,10 +112,104 @@ class ImportRunner
         };
     }
 
+    private function resolveVenueConnector(Source $source): VenueSourceConnector
+    {
+        return match ($source->type) {
+            Source::TYPE_JSON_API => app(JsonApiVenueConnector::class),
+            default => throw new RuntimeException("Source type [{$source->type}] cannot import places"),
+        };
+    }
+
     /**
      * @return string 'items_created'|'items_updated'|'items_skipped_duplicate'
      */
-    private function processItem(Source $source, RawEventDTO $dto): string
+    private function processItem(Source $source, RawEventDTO|RawVenueDTO $dto): string
+    {
+        return $dto instanceof RawVenueDTO
+            ? $this->processVenue($source, $dto)
+            : $this->processEvent($source, $dto);
+    }
+
+    /**
+     * Imported places are upserted on the source's own stable id, so a
+     * re-import updates rather than duplicating. Without an external id we
+     * fall back to the slug, which is how event-derived venues are matched.
+     *
+     * @return string 'items_created'|'items_updated'
+     */
+    private function processVenue(Source $source, RawVenueDTO $dto): string
+    {
+        $location = $this->locations->resolve($dto->address, $dto->locationHint ?? $dto->name);
+
+        $attributes = array_filter([
+            'name' => $dto->name,
+            'description' => $dto->description,
+            'address' => $dto->address,
+            'city_id' => $location['city_id'],
+            'canton_id' => $location['canton_id'],
+            'lat' => $dto->lat,
+            'lng' => $dto->lng,
+            'website' => $dto->website,
+            'image' => $dto->image,
+            'venue_type' => $this->venueType($dto->venueType),
+        ], fn ($value) => $value !== null);
+
+        $existing = $dto->externalId
+            ? Venue::where('source_id', $source->id)->where('source_external_id', $dto->externalId)->first()
+            : Venue::where('slug', Str::slug($dto->name))->first();
+
+        if ($existing) {
+            $existing->update($attributes);
+
+            return 'items_updated';
+        }
+
+        Venue::create([
+            ...$attributes,
+            'slug' => $this->uniqueVenueSlug($dto->name),
+            'source_id' => $source->id,
+            'source_external_id' => $dto->externalId,
+            'status' => 'published',
+        ]);
+
+        return 'items_created';
+    }
+
+    private function venueType(?string $hint): string
+    {
+        if ($hint === null) {
+            return Venue::TYPE_GENERIC;
+        }
+
+        $hint = Str::lower($hint);
+
+        return match (true) {
+            str_contains($hint, 'museum') => Venue::TYPE_MUSEUM,
+            str_contains($hint, 'park'), str_contains($hint, 'garden') => Venue::TYPE_PARK,
+            str_contains($hint, 'theat') => Venue::TYPE_THEATRE,
+            str_contains($hint, 'castle'), str_contains($hint, 'church'),
+            str_contains($hint, 'monument'), str_contains($hint, 'historic') => Venue::TYPE_HISTORICAL_BUILDING,
+            default => Venue::TYPE_GENERIC,
+        };
+    }
+
+    private function uniqueVenueSlug(string $name): string
+    {
+        $base = Str::slug($name);
+        $slug = $base;
+        $attempt = 1;
+
+        while (Venue::where('slug', $slug)->exists()) {
+            $slug = "{$base}-".++$attempt;
+        }
+
+        return $slug;
+    }
+
+    /**
+     * @return string 'items_created'|'items_updated'|'items_skipped_duplicate'
+     */
+    private function processEvent(Source $source, RawEventDTO $dto): string
     {
         $venue = $this->resolveVenue($dto);
         $category = $this->resolveCategory($dto);

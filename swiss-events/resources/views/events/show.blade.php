@@ -57,6 +57,8 @@
             </div>
         @endif
 
+        <x-source-attribution :source="$event->source" />
+
         <div class="mt-6">
             <a href="{{ route('events.index') }}" class="text-sm text-indigo-600 hover:underline">&larr; Back to all events</a>
         </div>

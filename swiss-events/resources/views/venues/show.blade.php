@@ -47,6 +47,8 @@
             </div>
         @endif
 
+        <x-source-attribution :source="$venue->source" />
+
         <div class="mt-6">
             <a href="{{ route('venues.index') }}" class="text-sm text-indigo-600 hover:underline">&larr; Back to all places</a>
         </div>

@@ -60,4 +60,30 @@ class Source extends Model
     {
         return $this->trust_level === self::TRUST_TRUSTED;
     }
+
+    /**
+     * Credit line required by the source's licence, shown on any page built
+     * from its data. Open datasets are frequently CC BY-SA, which permits reuse
+     * only with attribution — so this is a licence obligation, not decoration.
+     *
+     * Set via config: {"attribution": {"text": "...", "url": "...",
+     * "licence": "CC BY-SA 4.0", "licence_url": "..."}}
+     *
+     * @return array{text: string, url: ?string, licence: ?string, licence_url: ?string}|null
+     */
+    public function attribution(): ?array
+    {
+        $attribution = $this->config['attribution'] ?? null;
+
+        if (! is_array($attribution) || blank($attribution['text'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'text' => $attribution['text'],
+            'url' => $attribution['url'] ?? null,
+            'licence' => $attribution['licence'] ?? null,
+            'licence_url' => $attribution['licence_url'] ?? null,
+        ];
+    }
 }
